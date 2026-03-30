@@ -1,0 +1,18 @@
+VulnScanner Report
+==================
+Target:     google.com
+Date:       30/3/2026, 11:23:55 pm
+Risk Score: 1.7/10
+Level:      Low
+
+Open Ports: 8080, 22
+CVEs:       None
+
+Checks
+------
+SQL Injection:  safe
+XSS:            safe
+HTTP Headers:   present
+CSRF:           present
+SSL/TLS:        valid
+Dir Traversal:  secure
