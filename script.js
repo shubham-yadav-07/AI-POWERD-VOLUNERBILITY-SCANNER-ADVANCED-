@@ -1,13 +1,3 @@
-// ── PARTICLES ──
-const pWrap = document.getElementById('particles');
-for (let i = 0; i < 30; i++) {
-  const p = document.createElement('div');
-  p.className = 'particle';
-  p.style.cssText = `left:${Math.random()*100}%;animation-duration:${8+Math.random()*12}s;animation-delay:${Math.random()*10}s;`;
-  pWrap.appendChild(p);
-}
-
-// ── CLOCK ──
 setInterval(() => {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString();
 }, 1000);
@@ -15,37 +5,38 @@ setInterval(() => {
 let scanData = null;
 let barChart, pieChart, radarChart, lineChart;
 
-// ── SCAN DATA GENERATOR ──
 function generateScanData(domain) {
   const h = domain.toLowerCase();
   const isMajor = ['google','github','microsoft','amazon','cloudflare'].some(s => h.includes(s));
   const riskBase = isMajor ? 1.5 : 4.5 + Math.random() * 4;
+  const allPorts = [21,22,23,25,53,80,110,443,445,3306,3389,5432,6379,8080];
   const ports = [];
-  const allPorts = [21,22,23,25,53,80,110,143,443,445,3306,3389,5432,6379,8080,8443];
-  const count = isMajor ? 2 : 2 + Math.floor(Math.random() * 5);
+  const count = isMajor ? 2 : 2 + Math.floor(Math.random() * 4);
   while (ports.length < count) {
     const p = allPorts[Math.floor(Math.random() * allPorts.length)];
     if (!ports.includes(p)) ports.push(p);
   }
-  const sqlVuln = !isMajor && Math.random() > 0.5;
-  const xssVuln = !isMajor && Math.random() > 0.4;
-  const headersOk = isMajor || Math.random() > 0.5;
-  const csrfVuln = !isMajor && Math.random() > 0.6;
-  const sslOk = Math.random() > 0.2;
-  const dirTraversal = !isMajor && Math.random() > 0.7;
-  const risk = parseFloat(Math.min(9.9, riskBase + (sqlVuln?1.5:0) + (xssVuln?1:0) + (!headersOk?0.5:0) + (csrfVuln?0.8:0) + (!sslOk?0.7:0) + (dirTraversal?1.2:0) + ports.length*0.15).toFixed(1));
+  const sql = !isMajor && Math.random() > 0.5;
+  const xss = !isMajor && Math.random() > 0.4;
+  const headers = isMajor || Math.random() > 0.5;
+  const csrf = !isMajor && Math.random() > 0.6;
+  const ssl = Math.random() > 0.2;
+  const dir = !isMajor && Math.random() > 0.7;
+  const risk = parseFloat(Math.min(9.9,
+    riskBase + (sql?1.5:0) + (xss?1:0) + (!headers?0.5:0) +
+    (csrf?0.8:0) + (!ssl?0.7:0) + (dir?1.2:0) + ports.length*0.1
+  ).toFixed(1));
   const cves = [];
-  if (sqlVuln) cves.push('CVE-2024-1234');
-  if (xssVuln) cves.push('CVE-2024-5678');
-  if (!sslOk) cves.push('CVE-2023-9101');
-  if (dirTraversal) cves.push('CVE-2024-2468');
-  return { domain, ports, sqlVuln, xssVuln, headersOk, csrfVuln, sslOk, dirTraversal, risk, cves, isMajor };
+  if (sql) cves.push('CVE-2024-1234');
+  if (xss) cves.push('CVE-2024-5678');
+  if (!ssl) cves.push('CVE-2023-9101');
+  if (dir) cves.push('CVE-2024-2468');
+  return { domain, ports, sql, xss, headers, csrf, ssl, dir, risk, cves };
 }
 
-// ── LOGGER ──
 function log(msg, type = 'info') {
   const t = document.getElementById('terminal');
-  const now = new Date().toLocaleTimeString('en-GB', {hour12:false});
+  const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
   const d = document.createElement('div');
   d.className = 'log-line';
   d.innerHTML = `<span class="log-time">[${now}]</span><span class="log-${type}">${msg}</span>`;
@@ -55,272 +46,390 @@ function log(msg, type = 'info') {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ── MAIN SCAN ──
 async function startScan() {
   const domain = document.getElementById('domainInput').value.trim();
   if (!domain) {
-    document.getElementById('domainInput').style.borderColor = '#ff0055';
+    document.getElementById('domainInput').style.borderColor = 'var(--red)';
     setTimeout(() => document.getElementById('domainInput').style.borderColor = '', 1000);
     return;
   }
-  ['dashboard','chartsSection','aiSection','solutionsSection','reportSection'].forEach(id => {
-    document.getElementById(id).classList.add('hidden');
-  });
-  document.getElementById('timelineWrap').classList.remove('show');
-  document.getElementById('terminal').classList.add('active');
+
+  document.getElementById('results').classList.add('hidden');
+  document.getElementById('terminal').classList.remove('hidden');
   document.getElementById('terminal').innerHTML = '';
+  document.getElementById('steps').classList.remove('hidden');
+  document.getElementById('progressBar').classList.remove('hidden');
 
   const btn = document.getElementById('scanBtn');
-  btn.textContent = '⟳ SCANNING...';
-  btn.classList.add('scanning');
+  btn.textContent = 'Scanning...';
   btn.disabled = true;
 
-  document.getElementById('progressWrap').classList.add('active');
   const fill = document.getElementById('progressFill');
-  const steps = ['step1','step2','step3','step4','step5','step6','step7'];
+  const steps = ['s1','s2','s3','s4','s5','s6','s7'];
   const msgs = [
-    ['info','[DNS] Resolving hostname...'],
-    ['ok','[PORT] Initiating port sweep on 1000 common ports...'],
-    ['warn','[SQL] Testing injection vectors on form endpoints...'],
-    ['warn','[XSS] Injecting payloads into query parameters...'],
-    ['info','[HEADER] Auditing HTTP security headers...'],
-    ['info','[AI] Running BERT threat classification model...'],
-    ['ok','[REPORT] Compiling findings into structured JSON...'],
+    ['info', 'Resolving hostname via DNS...'],
+    ['info', 'Sweeping common ports (1-1024)...'],
+    ['warn', 'Testing SQL injection vectors...'],
+    ['warn', 'Checking XSS in query parameters...'],
+    ['info', 'Auditing HTTP security headers...'],
+    ['info', 'Running AI threat classification...'],
+    ['ok',   'Compiling final report...'],
   ];
+
   for (let i = 0; i < steps.length; i++) {
     document.getElementById(steps[i]).className = 'step active';
     log(...msgs[i]);
-    fill.style.width = `${((i+1)/steps.length)*100}%`;
-    await sleep(600 + Math.random()*400);
+    fill.style.width = `${((i + 1) / steps.length) * 100}%`;
+    await sleep(500 + Math.random() * 400);
     document.getElementById(steps[i]).className = 'step done';
   }
 
   scanData = generateScanData(domain);
-  await sleep(300);
-  renderDashboard(scanData);
-  renderCharts(scanData);
-  renderTimeline(scanData);
-  renderAI(scanData);
-  renderSolutions(scanData);
-  document.getElementById('reportSection').classList.remove('hidden');
-  log(`[DONE] Scan complete. Risk: ${scanData.risk}/10 | CVEs: ${scanData.cves.length}`, scanData.risk > 5 ? 'err' : 'ok');
+  await sleep(200);
 
-  btn.textContent = '⚡ SCAN TARGET';
-  btn.classList.remove('scanning');
+  renderAll(scanData);
+
+  btn.textContent = 'Scan';
   btn.disabled = false;
 }
 
-// ── DASHBOARD ──
-function renderDashboard(d) {
-  document.getElementById('dashboard').classList.remove('hidden');
-  const pct = d.risk / 10;
-  const offset = 238.76 - pct * 238.76;
-  const ring = document.getElementById('riskRing');
-  setTimeout(() => { ring.style.strokeDashoffset = offset; }, 100);
-  const color = d.risk < 3 ? '#39ff14' : d.risk < 6 ? '#ffb700' : '#ff0055';
-  ring.style.stroke = color;
-  const num = document.getElementById('riskNum');
+function renderAll(d) {
+  renderScore(d);
+  renderInfo(d);
+  renderSeverity(d);
+  renderVulns(d);
+  renderCharts(d);
+  renderAI(d);
+  renderPredictions(d);
+  renderFixes(d);
+  document.getElementById('results').classList.remove('hidden');
+  log(`Done. Risk score: ${d.risk}/10 — CVEs matched: ${d.cves.length}`, d.risk > 6 ? 'err' : 'ok');
+}
+
+function renderScore(d) {
+  const color = d.risk < 3 ? 'var(--green)' : d.risk < 6 ? 'var(--yellow)' : 'var(--red)';
+  const level = d.risk < 3 ? 'Low' : d.risk < 6 ? 'Medium' : d.risk < 8 ? 'High' : 'Critical';
+  const num = document.getElementById('scoreNum');
   num.style.color = color;
-  animateNum(num, 0, d.risk, 1500);
-  const lvl = d.risk < 3 ? 'LOW' : d.risk < 6 ? 'MEDIUM' : d.risk < 8 ? 'HIGH' : 'CRITICAL';
-  const badgeClass = d.risk < 3 ? 'badge-safe' : d.risk < 6 ? 'badge-warn' : 'badge-danger';
-  document.getElementById('riskBadge').textContent = lvl;
-  document.getElementById('riskBadge').className = `card-badge ${badgeClass}`;
-  document.getElementById('threatLevel').textContent = lvl;
-  document.getElementById('threatLevel').style.color = color;
-  document.getElementById('portsFound').textContent = d.ports.join(', ') || 'None';
-  document.getElementById('cvesFound').textContent = d.cves.length;
-  document.getElementById('scanTime').textContent = (2.1 + Math.random()).toFixed(2) + 's';
-  document.getElementById('targetLabel').textContent = d.domain.toUpperCase();
+  animateNum(num, 0, d.risk, 1200);
+  const bar = document.getElementById('scoreBar');
+  bar.style.background = color;
+  setTimeout(() => { bar.style.width = (d.risk / 10 * 100) + '%'; }, 100);
+  const lv = document.getElementById('scoreLevel');
+  lv.textContent = level;
+  lv.style.color = color;
+}
 
-  const items = [
-    { icon:'🗄️', name:'SQL Injection', status:d.sqlVuln?'VULNERABLE':'SAFE', cls:d.sqlVuln?'status-danger':'status-safe' },
-    { icon:'💉', name:'XSS', status:d.xssVuln?'VULNERABLE':'SAFE', cls:d.xssVuln?'status-danger':'status-safe' },
-    { icon:'📋', name:'HTTP Headers', status:d.headersOk?'PRESENT':'MISSING', cls:d.headersOk?'status-safe':'status-warn' },
-    { icon:'🔐', name:'CSRF Protection', status:d.csrfVuln?'MISSING':'PRESENT', cls:d.csrfVuln?'status-warn':'status-safe' },
-    { icon:'🔒', name:'SSL/TLS', status:d.sslOk?'VALID':'WEAK', cls:d.sslOk?'status-safe':'status-danger' },
-    { icon:'📁', name:'Dir Traversal', status:d.dirTraversal?'EXPOSED':'SECURE', cls:d.dirTraversal?'status-danger':'status-safe' },
-  ];
-  document.getElementById('resultsGrid').innerHTML = items.map(i => `
-    <div class="result-item">
-      <div class="result-icon">${i.icon}</div>
-      <div><div class="result-name">${i.name}</div><div class="result-status ${i.cls}">${i.status}</div></div>
+function renderInfo(d) {
+  document.getElementById('infoRows').innerHTML = [
+    { k: 'Target', v: d.domain },
+    { k: 'Open Ports', v: d.ports.join(', ') || 'None' },
+    { k: 'CVEs', v: d.cves.length || 'None' },
+    { k: 'Scan Time', v: (1.8 + Math.random()).toFixed(2) + 's' },
+  ].map(r => `
+    <div class="info-row">
+      <span class="info-key">${r.k}</span>
+      <span class="info-val">${r.v}</span>
     </div>`).join('');
+}
 
+function renderSeverity(d) {
   const sevs = [
-    { label:'CRITICAL', count:[d.sqlVuln,d.dirTraversal].filter(Boolean).length, color:'#ff0055' },
-    { label:'HIGH', count:[d.xssVuln,!d.sslOk].filter(Boolean).length, color:'#ffb700' },
-    { label:'MEDIUM', count:[!d.headersOk,d.csrfVuln].filter(Boolean).length, color:'#00f5ff' },
-    { label:'LOW', count:Math.max(0,d.ports.length-3), color:'#39ff14' },
+    { label: 'Critical', count: [d.sql, d.dir].filter(Boolean).length, color: 'var(--red)' },
+    { label: 'High',     count: [d.xss, !d.ssl].filter(Boolean).length, color: 'var(--yellow)' },
+    { label: 'Medium',   count: [!d.headers, d.csrf].filter(Boolean).length, color: 'var(--accent)' },
+    { label: 'Low',      count: Math.max(0, d.ports.length - 2), color: 'var(--green)' },
   ];
-  const total = Math.max(1, sevs.reduce((a,b)=>a+b.count,0));
-  document.getElementById('severityBreakdown').innerHTML = sevs.map(s => `
-    <div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:5px">
-        <span style="font-size:12px;color:${s.color};font-family:'Share Tech Mono'">${s.label}</span>
-        <span style="font-family:'Share Tech Mono';font-size:12px">${s.count} found</span>
+  const total = Math.max(1, sevs.reduce((a, b) => a + b.count, 0));
+  document.getElementById('severityRows').innerHTML = sevs.map(s => `
+    <div class="sev-row">
+      <div class="sev-top">
+        <span style="color:${s.color};font-weight:600;font-size:12px">${s.label}</span>
+        <span style="font-family:var(--mono);font-size:12px">${s.count}</span>
       </div>
-      <div class="pred-bar-bg">
-        <div class="pred-bar-fill" style="background:${s.color};width:0" data-target="${Math.round(s.count/total*100)}"></div>
+      <div class="sev-bar-bg">
+        <div class="sev-bar-fill" style="background:${s.color};width:0" data-w="${Math.round(s.count/total*100)}"></div>
       </div>
     </div>`).join('');
   setTimeout(() => {
-    document.querySelectorAll('.pred-bar-fill[data-target]').forEach(el => { el.style.width = el.dataset.target + '%'; });
+    document.querySelectorAll('.sev-bar-fill').forEach(el => { el.style.width = el.dataset.w + '%'; });
   }, 200);
 }
 
-// ── CHARTS ──
+function renderVulns(d) {
+  const checks = [
+    { icon: '🗄', name: 'SQL Injection', status: d.sql ? 'Vulnerable' : 'Safe', cls: d.sql ? 'danger' : 'safe' },
+    { icon: '💉', name: 'XSS', status: d.xss ? 'Vulnerable' : 'Safe', cls: d.xss ? 'danger' : 'safe' },
+    { icon: '📋', name: 'HTTP Headers', status: d.headers ? 'Present' : 'Missing', cls: d.headers ? 'safe' : 'warn' },
+    { icon: '🔐', name: 'CSRF', status: d.csrf ? 'Missing' : 'Present', cls: d.csrf ? 'warn' : 'safe' },
+    { icon: '🔒', name: 'SSL / TLS', status: d.ssl ? 'Valid' : 'Weak', cls: d.ssl ? 'safe' : 'danger' },
+    { icon: '📁', name: 'Dir Traversal', status: d.dir ? 'Exposed' : 'Secure', cls: d.dir ? 'danger' : 'safe' },
+  ];
+  document.getElementById('vulnGrid').innerHTML = checks.map(c => `
+    <div class="vuln-item">
+      <span class="vuln-icon">${c.icon}</span>
+      <div>
+        <div class="vuln-name">${c.name}</div>
+        <div class="vuln-status ${c.cls}">${c.status}</div>
+      </div>
+    </div>`).join('');
+}
+
 function renderCharts(d) {
-  document.getElementById('chartsSection').classList.remove('hidden');
   if (barChart) barChart.destroy();
   if (pieChart) pieChart.destroy();
   if (radarChart) radarChart.destroy();
+  if (lineChart) lineChart.destroy();
 
-  const barVals = [Math.min(3,d.ports.length*0.5),d.sqlVuln?2.5:0.2,d.xssVuln?2:0.2,d.headersOk?0.2:1.5,d.csrfVuln?1.5:0.1,d.sslOk?0.1:1.8,d.dirTraversal?2.8:0.1];
+  const bv = [
+    Math.min(3, d.ports.length * 0.5),
+    d.sql ? 2.5 : 0.2,
+    d.xss ? 2.0 : 0.2,
+    d.headers ? 0.1 : 1.5,
+    d.csrf ? 1.5 : 0.1,
+    d.ssl ? 0.1 : 1.8,
+    d.dir ? 2.8 : 0.1,
+  ];
+
   barChart = new Chart(document.getElementById('barChart'), {
     type: 'bar',
     data: {
-      labels: ['Ports','SQL','XSS','Headers','CSRF','SSL','Dir Traversal'],
-      datasets: [{ label:'Risk Factor', data:barVals, backgroundColor:barVals.map(v=>v>2?'rgba(255,0,85,0.6)':v>1?'rgba(255,183,0,0.6)':'rgba(0,245,255,0.4)'), borderColor:barVals.map(v=>v>2?'#ff0055':v>1?'#ffb700':'#00f5ff'), borderWidth:1, borderRadius:4 }]
+      labels: ['Ports','SQL','XSS','Headers','CSRF','SSL','Dir'],
+      datasets: [{
+        data: bv,
+        backgroundColor: bv.map(v => v > 2 ? '#fecaca' : v > 1 ? '#fef08a' : '#bbf7d0'),
+        borderColor: bv.map(v => v > 2 ? '#dc2626' : v > 1 ? '#ca8a04' : '#16a34a'),
+        borderWidth: 1, borderRadius: 4,
+      }]
     },
-    options: chartOpts(3)
+    options: baseOpts(3)
   });
 
-  const vulnLabels = ['SQL Injection','XSS','Header Issues','CSRF','SSL Weakness','Dir Traversal'];
-  const vulnVals = [d.sqlVuln?1:0,d.xssVuln?1:0,!d.headersOk?1:0,d.csrfVuln?1:0,!d.sslOk?1:0,d.dirTraversal?1:0];
-  const safe = vulnVals.filter(v=>!v).length;
-  const pLabels = [...vulnLabels.filter((_,i)=>vulnVals[i]),'Secure'];
-  const pVals = [...vulnVals.filter(v=>v),safe];
-  const cols = ['rgba(255,0,85,0.8)','rgba(255,0,85,0.6)','rgba(255,183,0,0.7)','rgba(255,183,0,0.5)','rgba(191,95,255,0.7)','rgba(191,95,255,0.5)','rgba(57,255,20,0.5)'];
+  const vl = ['SQL','XSS','Headers','CSRF','SSL','Dir Traversal'];
+  const vv = [d.sql?1:0, d.xss?1:0, !d.headers?1:0, d.csrf?1:0, !d.ssl?1:0, d.dir?1:0];
+  const safe = vv.filter(v => !v).length;
+  const pl = [...vl.filter((_,i) => vv[i]), 'Secure'];
+  const pv = [...vv.filter(v => v), safe];
+
   pieChart = new Chart(document.getElementById('pieChart'), {
     type: 'doughnut',
-    data: { labels:pLabels, datasets:[{ data:pVals, backgroundColor:cols.slice(0,pLabels.length), borderColor:'transparent', hoverOffset:8 }] },
-    options: { responsive:true, maintainAspectRatio:true, plugins:{ legend:{ position:'bottom', labels:{ color:'#6b8fb5', font:{ size:10, family:'Share Tech Mono' }, boxWidth:12 } }, tooltip:{ backgroundColor:'#0a1628', titleColor:'#00f5ff', bodyColor:'#e8f4ff' } } }
+    data: {
+      labels: pl,
+      datasets: [{
+        data: pv,
+        backgroundColor: ['#fca5a5','#fcd34d','#93c5fd','#c4b5fd','#6ee7b7','#f9a8d4','#d1d5db'],
+        borderColor: '#fff', borderWidth: 2, hoverOffset: 6,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 10 } },
+        tooltip: { backgroundColor: '#1e1e1e', titleColor: '#fff', bodyColor: '#ccc' }
+      }
+    }
   });
 
   radarChart = new Chart(document.getElementById('radarChart'), {
     type: 'radar',
     data: {
-      labels: ['Network Exp.','Web Vuln.','Data Leak','Auth Bypass','MITM Risk','Brute Force'],
-      datasets: [{ label:'Risk Level', data:[d.ports.length*1.2,(d.sqlVuln?3:0)+(d.xssVuln?2:0),d.dirTraversal?3.5:0.5,d.csrfVuln?3:0.5,!d.sslOk?3:0.5,d.ports.includes(22)||d.ports.includes(3389)?2.5:0.5], backgroundColor:'rgba(0,245,255,0.1)', borderColor:'rgba(0,245,255,0.8)', pointBackgroundColor:'#00f5ff', pointRadius:4 }]
+      labels: ['Network','Web Vulns','Data Leak','Auth','MITM','Brute Force'],
+      datasets: [{
+        label: 'Risk',
+        data: [
+          d.ports.length * 1.2,
+          (d.sql?3:0)+(d.xss?2:0),
+          d.dir ? 3.5 : 0.4,
+          d.csrf ? 3 : 0.4,
+          !d.ssl ? 3 : 0.4,
+          d.ports.includes(22)||d.ports.includes(3389) ? 2.5 : 0.4
+        ],
+        backgroundColor: 'rgba(37,99,235,0.1)',
+        borderColor: '#2563eb',
+        pointBackgroundColor: '#2563eb',
+        pointRadius: 3,
+      }]
     },
-    options: { responsive:true, maintainAspectRatio:true, plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'#0a1628', titleColor:'#00f5ff', bodyColor:'#e8f4ff' } }, scales:{ r:{ min:0, max:5, ticks:{ color:'#6b8fb5', font:{size:9}, backdropColor:'transparent', stepSize:1 }, grid:{ color:'rgba(255,255,255,0.08)' }, angleLines:{ color:'rgba(255,255,255,0.06)' }, pointLabels:{ color:'#6b8fb5', font:{ size:10, family:'Share Tech Mono' } } } } }
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1e1e1e' } },
+      scales: {
+        r: {
+          min: 0, max: 5,
+          ticks: { stepSize: 1, font: { size: 9 }, backdropColor: 'transparent', color: '#999' },
+          grid: { color: '#e5e7eb' },
+          angleLines: { color: '#e5e7eb' },
+          pointLabels: { font: { size: 10 }, color: '#555' }
+        }
+      }
+    }
+  });
+
+  const labels30 = Array.from({ length: 30 }, (_, i) => `D${i+1}`);
+  const lineData = labels30.map((_, i) =>
+    Math.max(0, Math.min(10, d.risk + (Math.random()-0.5)*1.5 + Math.sin(i/4)*0.4))
+  );
+  lineChart = new Chart(document.getElementById('lineChart'), {
+    type: 'line',
+    data: {
+      labels: labels30,
+      datasets: [
+        {
+          label: 'Predicted Risk',
+          data: lineData,
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37,99,235,0.08)',
+          borderWidth: 2, fill: true, tension: 0.4, pointRadius: 0,
+        },
+        {
+          label: 'Critical (7)',
+          data: Array(30).fill(7),
+          borderColor: '#dc2626',
+          borderWidth: 1, borderDash: [4,4],
+          fill: false, pointRadius: 0,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { labels: { font: { size: 11 }, boxWidth: 12 } },
+        tooltip: { backgroundColor: '#1e1e1e', titleColor: '#fff', bodyColor: '#ccc' }
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 10, font: { size: 9 }, color: '#999' }, grid: { color: '#f0f0f0' } },
+        y: { min: 0, max: 10, ticks: { font: { size: 9 }, color: '#999' }, grid: { color: '#f0f0f0' } }
+      }
+    }
   });
 }
 
-function chartOpts(max) {
-  return { responsive:true, maintainAspectRatio:true, plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'#0a1628', titleColor:'#00f5ff', bodyColor:'#e8f4ff', borderColor:'rgba(0,245,255,0.3)', borderWidth:1 } }, scales:{ x:{ ticks:{ color:'#6b8fb5', font:{ size:10, family:'Share Tech Mono' } }, grid:{ color:'rgba(255,255,255,0.04)' }, border:{color:'transparent'} }, y:{ max, ticks:{ color:'#6b8fb5', font:{size:10} }, grid:{ color:'rgba(255,255,255,0.06)' }, border:{color:'transparent'} } } };
+function baseOpts(max) {
+  return {
+    responsive: true, maintainAspectRatio: true,
+    plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1e1e1e', titleColor: '#fff', bodyColor: '#ccc' } },
+    scales: {
+      x: { ticks: { font: { size: 10 }, color: '#999' }, grid: { color: '#f0f0f0' } },
+      y: { max, ticks: { font: { size: 10 }, color: '#999' }, grid: { color: '#f0f0f0' } }
+    }
+  };
 }
 
-// ── TIMELINE ──
-function renderTimeline(d) {
-  document.getElementById('timelineWrap').classList.add('show');
-  if (lineChart) lineChart.destroy();
-  const labels = Array.from({length:30},(_,i)=>`Day ${i+1}`);
-  const data = labels.map((_,i)=>Math.max(0,Math.min(10,d.risk+(Math.random()-0.5)*1.5+Math.sin(i/4)*0.5)));
-  const ctx = document.getElementById('lineChart').getContext('2d');
-  const grad = ctx.createLinearGradient(0,0,0,180);
-  grad.addColorStop(0,'rgba(0,245,255,0.3)');
-  grad.addColorStop(1,'rgba(0,245,255,0)');
-  lineChart = new Chart(ctx, {
-    type:'line',
-    data:{ labels, datasets:[
-      { label:'Predicted Risk', data, borderColor:'#00f5ff', backgroundColor:grad, borderWidth:2, fill:true, tension:0.4, pointRadius:0, pointHoverRadius:5 },
-      { label:'Critical Threshold', data:Array(30).fill(7), borderColor:'rgba(255,0,85,0.6)', borderWidth:1, borderDash:[5,5], fill:false, pointRadius:0 }
-    ]},
-    options:{ responsive:true, maintainAspectRatio:true, plugins:{ legend:{ labels:{ color:'#6b8fb5', font:{size:10} } }, tooltip:{ backgroundColor:'#0a1628', titleColor:'#00f5ff', bodyColor:'#e8f4ff' } }, scales:{ x:{ ticks:{ color:'#6b8fb5', font:{size:9}, maxTicksLimit:10 }, grid:{ color:'rgba(255,255,255,0.04)' }, border:{color:'transparent'} }, y:{ min:0, max:10, ticks:{ color:'#6b8fb5', font:{size:9} }, grid:{ color:'rgba(255,255,255,0.06)' }, border:{color:'transparent'} } } }
-  });
-}
-
-// ── AI PANEL ──
 function renderAI(d) {
-  document.getElementById('aiSection').classList.remove('hidden');
-  const lvl = d.risk < 3 ? 'low' : d.risk < 6 ? 'moderate' : 'critical';
-  const color = d.risk < 3 ? 'var(--neon-green)' : d.risk < 6 ? 'var(--neon-amber)' : 'var(--neon-red)';
+  const lvl = d.risk < 3 ? 'low' : d.risk < 6 ? 'moderate' : 'high';
   const issues = [];
-  if (d.sqlVuln) issues.push('SQL injection vulnerability — highest severity finding');
-  if (d.xssVuln) issues.push('Cross-site scripting detected — user data at risk');
-  if (!d.headersOk) issues.push('Missing security headers (CSP, HSTS, X-Frame-Options)');
-  if (d.csrfVuln) issues.push('CSRF token absent — state-changing requests unprotected');
-  if (!d.sslOk) issues.push('SSL/TLS weakness — man-in-the-middle exposure');
-  if (d.dirTraversal) issues.push('Directory traversal — filesystem paths accessible');
-  const tags = ['OWASP TOP 10','CVE DATABASE','ML CLASSIFIER','THREAT INTEL',...d.cves];
-  document.getElementById('aiThinking').textContent = 'ANALYSIS COMPLETE';
-  document.getElementById('aiOutput').innerHTML = `
-    <p><strong style="color:var(--neon-cyan)">${d.domain}</strong> presents a <strong style="color:${color}">${lvl} risk profile</strong> with an overall score of <strong>${d.risk}/10</strong>.</p>
-    ${issues.length ? `<p>Key threats: <strong>${issues[0]}</strong>. ${issues.slice(1).join('. ')}.</p>` : '<p>No critical vulnerabilities detected. Maintain regular scanning cadence.</p>'}
-    <p>${d.ports.length} open port${d.ports.length!==1?'s':''} detected (${d.ports.join(', ')}). ${d.ports.includes(3306)||d.ports.includes(5432)?'Database ports exposed — restrict via firewall immediately.':d.ports.includes(22)?'SSH exposed — enforce key-based auth only.':'Port exposure within acceptable parameters.'}</p>
-    <p style="margin-top:12px">${tags.map(t=>`<span class="ai-tag">${t}</span>`).join('')}</p>`;
+  if (d.sql) issues.push('SQL injection');
+  if (d.xss) issues.push('cross-site scripting');
+  if (!d.headers) issues.push('missing security headers');
+  if (d.csrf) issues.push('absent CSRF protection');
+  if (!d.ssl) issues.push('weak SSL/TLS');
+  if (d.dir) issues.push('directory traversal');
 
-  const preds = [
-    { name:'SQL Injection Attack', pct:d.sqlVuln?82:12, color:'#ff0055' },
-    { name:'Brute Force Attempt', pct:d.ports.includes(22)||d.ports.includes(3389)?71:18, color:'#ffb700' },
-    { name:'XSS Exploitation', pct:d.xssVuln?65:8, color:'#ffb700' },
-    { name:'Data Exfiltration', pct:d.dirTraversal?58:5, color:'#bf5fff' },
-    { name:'MITM Interception', pct:!d.sslOk?48:6, color:'#00f5ff' },
-  ];
-  document.getElementById('predictionRows').innerHTML = preds.map(p => `
-    <div class="pred-item">
-      <div class="pred-top"><span class="pred-name">${p.name}</span><span class="pred-pct" style="color:${p.color}">${p.pct}%</span></div>
-      <div class="pred-bar-bg"><div class="pred-bar-fill" style="background:${p.color};width:0;box-shadow:0 0 8px ${p.color}" data-w="${p.pct}"></div></div>
-    </div>`).join('');
-  setTimeout(() => { document.querySelectorAll('.pred-bar-fill[data-w]').forEach(el=>{ el.style.width=el.dataset.w+'%'; }); }, 300);
+  document.getElementById('aiText').innerHTML = `
+    <strong>${d.domain}</strong> has a <strong>${lvl} risk profile</strong> — score ${d.risk}/10.
+    ${issues.length
+      ? ` Main issues found: ${issues.join(', ')}.`
+      : ' No major vulnerabilities detected.'}
+    ${d.ports.length} open port${d.ports.length !== 1 ? 's' : ''} detected (${d.ports.join(', ')}).
+    ${d.ports.includes(3306) || d.ports.includes(5432) ? ' Database port exposed — restrict with firewall.' : ''}
+    ${d.ports.includes(22) ? ' SSH open — use key-based auth only.' : ''}
+  `;
+
+  const tags = ['OWASP', 'CVE DB', 'ML Model', ...d.cves];
+  document.getElementById('aiTags').innerHTML = tags.map(t => `<span class="tag">${t}</span>`).join('');
 }
 
-// ── SOLUTIONS ──
-function renderSolutions(d) {
-  document.getElementById('solutionsSection').classList.remove('hidden');
-  const sols = [];
-  if (d.sqlVuln) sols.push({ priority:'CRITICAL', priClass:'pri-critical', cardClass:'sol-critical', title:'Prevent SQL Injection', desc:'User input is being interpolated directly into SQL queries. Use parameterized queries.', code:`cursor.execute("SELECT * FROM users\nWHERE id = %s", (user_id,))\n\n# SQLAlchemy ORM:\nUser.query.filter_by(id=user_id).first()`, effort:2 });
-  if (d.xssVuln) sols.push({ priority:'HIGH', priClass:'pri-high', cardClass:'sol-high', title:'Fix Cross-Site Scripting', desc:'User input reflected without sanitization. Escape all output and implement CSP.', code:`from markupsafe import escape\n\n@app.route('/')\ndef index():\n  name = escape(request.args.get('name',''))\n  return render_template('index.html',name=name)`, effort:2 });
-  if (!d.headersOk) sols.push({ priority:'HIGH', priClass:'pri-high', cardClass:'sol-high', title:'Add Security Headers', desc:'Critical HTTP headers missing — browsers have no protection against clickjacking.', code:`@app.after_request\ndef headers(r):\n  r.headers['X-Frame-Options'] = 'DENY'\n  r.headers['X-Content-Type-Options'] = 'nosniff'\n  r.headers['Strict-Transport-Security'] = 'max-age=31536000'\n  return r`, effort:1 });
-  if (d.csrfVuln) sols.push({ priority:'HIGH', priClass:'pri-high', cardClass:'sol-high', title:'Implement CSRF Tokens', desc:'Forms lack CSRF protection — attackers can trick users into submitting unauthorized requests.', code:`from flask_wtf.csrf import CSRFProtect\n\napp = Flask(__name__)\napp.config['SECRET_KEY'] = 'your-secret'\ncsrf = CSRFProtect(app)`, effort:2 });
-  if (!d.sslOk) sols.push({ priority:'CRITICAL', priClass:'pri-critical', cardClass:'sol-critical', title:'Upgrade SSL/TLS', desc:'Weak or misconfigured SSL allows man-in-the-middle attacks. Enforce TLS 1.2+ minimum.', code:`# nginx.conf:\nssl_protocols TLSv1.2 TLSv1.3;\nssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256;\nssl_prefer_server_ciphers off;\nadd_header Strict-Transport-Security "max-age=63072000" always;`, effort:3 });
-  if (d.dirTraversal) sols.push({ priority:'CRITICAL', priClass:'pri-critical', cardClass:'sol-critical', title:'Block Directory Traversal', desc:'Attacker can read arbitrary files via ../../../etc/passwd patterns.', code:`import os\n\ndef safe_path(base, user_input):\n  path = os.path.realpath(os.path.join(base, user_input))\n  if not path.startswith(base):\n    raise ValueError("Path traversal detected!")\n  return path`, effort:2 });
-  if (!sols.length) sols.push({ priority:'MEDIUM', priClass:'pri-medium', cardClass:'sol-medium', title:'Maintain Security Posture', desc:'No critical issues found. Apply defense-in-depth and keep scanning regularly.', code:`# .github/workflows/security.yml\n- name: OWASP ZAP Scan\n  uses: zaproxy/action-full-scan@v0.9.0\n  with:\n    target: 'https://yourapp.com'`, effort:1 });
+function renderPredictions(d) {
+  const preds = [
+    { name: 'SQL Injection attack',  pct: d.sql ? 82 : 11, color: '#dc2626' },
+    { name: 'Brute force attempt',   pct: d.ports.includes(22)||d.ports.includes(3389) ? 70 : 17, color: '#ca8a04' },
+    { name: 'XSS exploitation',      pct: d.xss ? 64 : 8,  color: '#ca8a04' },
+    { name: 'Data exfiltration',     pct: d.dir ? 57 : 5,  color: '#7c3aed' },
+    { name: 'MITM interception',     pct: !d.ssl ? 47 : 6, color: '#2563eb' },
+  ];
+  document.getElementById('predRows').innerHTML = preds.map(p => `
+    <div class="pred-row">
+      <div class="pred-top">
+        <span>${p.name}</span>
+        <span class="pred-pct" style="color:${p.color}">${p.pct}%</span>
+      </div>
+      <div class="pred-bar-bg">
+        <div class="pred-bar-fill" style="background:${p.color};width:0" data-w="${p.pct}"></div>
+      </div>
+    </div>`).join('');
+  setTimeout(() => {
+    document.querySelectorAll('.pred-bar-fill[data-w]').forEach(el => { el.style.width = el.dataset.w + '%'; });
+  }, 300);
+}
 
-  document.getElementById('solutionsGrid').innerHTML = sols.map((s,i) => `
-    <div class="solution-card ${s.cardClass}" style="animation-delay:${i*0.1}s">
-      <div class="sol-priority ${s.priClass}">⚠ ${s.priority} PRIORITY</div>
-      <div class="sol-title">${s.title}</div>
-      <div class="sol-desc">${s.desc}</div>
-      <div class="sol-code">${s.code}</div>
-      <div class="sol-effort"><span>Effort:</span><div class="effort-dots">${Array(3).fill(0).map((_,j)=>`<div class="effort-dot ${j<s.effort?'filled':''}"></div>`).join('')}</div><span>${s.effort===1?'Low':s.effort===2?'Medium':'High'}</span></div>
+function renderFixes(d) {
+  const fixes = [];
+  if (d.sql) fixes.push({ cls:'critical', title:'SQL Injection', desc:'Use parameterized queries — never interpolate user input into SQL.', code:`cursor.execute(\n  "SELECT * FROM users WHERE id=%s",\n  (user_id,)\n)` });
+  if (d.xss) fixes.push({ cls:'high', title:'XSS', desc:'Escape all output rendered in HTML. Add a Content-Security-Policy header.', code:`from markupsafe import escape\nname = escape(request.args.get('name'))` });
+  if (!d.headers) fixes.push({ cls:'high', title:'Security Headers', desc:'Add X-Frame-Options, HSTS, X-Content-Type-Options to all responses.', code:`r.headers['X-Frame-Options'] = 'DENY'\nr.headers['X-Content-Type-Options'] = 'nosniff'\nr.headers['Strict-Transport-Security'] = 'max-age=31536000'` });
+  if (d.csrf) fixes.push({ cls:'high', title:'CSRF Tokens', desc:'Add CSRF tokens to all state-changing forms using Flask-WTF.', code:`from flask_wtf.csrf import CSRFProtect\ncsrf = CSRFProtect(app)` });
+  if (!d.ssl) fixes.push({ cls:'critical', title:'SSL / TLS', desc:'Enforce TLS 1.2+ and disable weak ciphers in your server config.', code:`ssl_protocols TLSv1.2 TLSv1.3;\nssl_prefer_server_ciphers off;` });
+  if (d.dir) fixes.push({ cls:'critical', title:'Directory Traversal', desc:'Validate all file paths — reject any containing ../ sequences.', code:`path = os.path.realpath(os.path.join(base, inp))\nif not path.startswith(base): raise ValueError()` });
+  if (!fixes.length) fixes.push({ cls:'medium', title:'Keep Monitoring', desc:'No critical issues found. Automate scanning in your CI/CD pipeline.', code:`# GitHub Actions\n- uses: zaproxy/action-full-scan@v0.9.0` });
+
+  document.getElementById('fixGrid').innerHTML = fixes.map(f => `
+    <div class="fix-card ${f.cls}">
+      <div class="fix-priority ${f.cls}">${f.cls}</div>
+      <div class="fix-title">${f.title}</div>
+      <div class="fix-desc">${f.desc}</div>
+      <div class="fix-code">${f.code}</div>
     </div>`).join('');
 }
 
 // ── HELPERS ──
 function animateNum(el, from, to, dur) {
   const start = performance.now();
-  function step(now) {
-    const t = Math.min((now-start)/dur, 1);
-    el.textContent = (from+(to-from)*t).toFixed(1);
+  (function step(now) {
+    const t = Math.min((now - start) / dur, 1);
+    el.textContent = (from + (to - from) * t).toFixed(1);
     if (t < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
+  })(performance.now());
 }
 
-function buildReportText() {
-  if (!scanData) return 'No scan data.';
+function buildReport() {
+  if (!scanData) return '';
   const d = scanData;
-  return `AI — SECURITY REPORT\n====================================\nTarget: ${d.domain}\nDate: ${new Date().toLocaleString()}\nRisk Score: ${d.risk}/10\nThreat Level: ${d.risk<3?'LOW':d.risk<6?'MEDIUM':d.risk<8?'HIGH':'CRITICAL'}\n\nOpen Ports: ${d.ports.join(', ')||'None'}\nCVEs: ${d.cves.join(', ')||'None'}\n\nSQL Injection:   ${d.sqlVuln?'VULNERABLE':'SAFE'}\nXSS:             ${d.xssVuln?'VULNERABLE':'SAFE'}\nHTTP Headers:    ${d.headersOk?'PRESENT':'MISSING'}\nCSRF:            ${d.csrfVuln?'MISSING':'PRESENT'}\nSSL/TLS:         ${d.sslOk?'VALID':'WEAK'}\nDir Traversal:   ${d.dirTraversal?'EXPOSED':'SECURE'}\n\nGenerated by AI — Powered Vulnerability Scanner`.trim();
+  return `VulnScanner Report
+==================
+Target:     ${d.domain}
+Date:       ${new Date().toLocaleString()}
+Risk Score: ${d.risk}/10
+Level:      ${d.risk<3?'Low':d.risk<6?'Medium':d.risk<8?'High':'Critical'}
+
+Open Ports: ${d.ports.join(', ')||'None'}
+CVEs:       ${d.cves.join(', ')||'None'}
+
+Checks
+------
+SQL Injection:  ${d.sql?'VULNERABLE':'safe'}
+XSS:            ${d.xss?'VULNERABLE':'safe'}
+HTTP Headers:   ${d.headers?'present':'MISSING'}
+CSRF:           ${d.csrf?'MISSING':'present'}
+SSL/TLS:        ${d.ssl?'valid':'WEAK'}
+Dir Traversal:  ${d.dir?'EXPOSED':'secure'}`;
 }
 
-function downloadPDF() {
+function downloadTXT() {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([buildReportText()],{type:'text/plain'}));
-  a.download = `report-${scanData?.domain||'scan'}.txt`;
+  a.href = URL.createObjectURL(new Blob([buildReport()], { type: 'text/plain' }));
+  a.download = `vulnscan-${scanData?.domain||'report'}.txt`;
   a.click();
 }
 function downloadJSON() {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(scanData,null,2)],{type:'application/json'}));
-  a.download = `scan-${scanData?.domain}.json`;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(scanData, null, 2)], { type: 'application/json' }));
+  a.download = `vulnscan-${scanData?.domain||'data'}.json`;
   a.click();
 }
-function copyReport() { navigator.clipboard.writeText(buildReportText()).then(()=>alert('Copied!')); }
-function shareReport() {
-  navigator.clipboard.writeText(`${location.origin}${location.pathname}?scan=${btoa(JSON.stringify(scanData))}`).then(()=>alert('Link copied!'));
+function copyReport() {
+  navigator.clipboard.writeText(buildReport()).then(() => alert('Copied to clipboard.'));
 }
 
-document.getElementById('domainInput').addEventListener('keydown', e => { if (e.key==='Enter') startScan(); });
+document.getElementById('domainInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') startScan();
+});
